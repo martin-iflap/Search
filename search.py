@@ -1,5 +1,16 @@
+from docx import Document
+import logging
+import os
+
+
+DIR_PATH = "C:\\Users\\User\\Documents\\Martin"
+SUPPORTED_FILE_TYPES = {".txt", ".docx"}
+
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s [%(levelname)s] %(message)s")
+
 class VectorCompare:
-    def magnitude(self, vector):
+    def magnitude(self, vector: dict) -> float:
         """Compute the magnitude of a vector represented as a dictionary"""
         if type(vector) != dict:
             raise ValueError("This function accepts only dictionary inputs!")
@@ -8,7 +19,7 @@ class VectorCompare:
             total += count ** 2
         return total ** 0.5
 
-    def relation(self, vector1, vector2):
+    def relation(self, vector1: dict, vector2: dict) -> float:
         """Compute the cosine similarity between two vectors represented as dictionaries"""
         if type(vector1) != dict or type(vector2) != dict:
             raise ValueError("This function accepts only dictionary inputs!")
@@ -21,8 +32,10 @@ class VectorCompare:
             relevance = top_value / (self.magnitude(vector1) * self.magnitude(vector2))
         return relevance
 
-    def concordance(self, document):
-        """Generate a concordance dictionary from the input document string"""
+    def concordance(self, document: str) -> dict[str, int]:
+        """Generate a concordance dictionary from the input document string
+         - return a dictionary with words as keys and their count as values
+        """
         if type(document) != str:
             raise ValueError("This function accepts only string inputs!")
         con = {}
@@ -33,38 +46,65 @@ class VectorCompare:
                 con[word] = 1
         return con
 
+def load_files(folder, v: VectorCompare) -> dict[int, dict]:
+    """Load files from the specified folder and return a concordance index
+     - return a dictionary with indexes as keys and dicts as values where:
+     -    1. concordance is a dict of word counts from the concordance method
+     -    2. filepath is the path to the file
+    """
+    index = {}
+    try:
+        for filename in os.listdir(folder):
+            filepath = os.path.join(folder, filename)
+
+            if os.path.isdir(filepath): # Handle subdirectories by recursion and merging results
+                inside = load_files(filepath, v)
+                index.update(inside)
+                continue
+
+            if not filename.endswith(tuple(SUPPORTED_FILE_TYPES)):
+                continue
+
+            content = ""
+
+            if filename.endswith(".txt"):
+                with open(filepath, encoding="utf-8") as f:
+                    content = f.read()
+            elif filename.endswith(".docx"):
+                doc = Document(filepath)
+                content = "\n".join([par.text for par in doc.paragraphs])
+
+            index[len(index)] = {
+                "concordance" : v.concordance(content.lower()),
+                "filepath" : filepath
+            }
+        logging.info("Loaded %d files from %s successfully", len(index), folder)
+        return index
+    except Exception as e:
+        logging.error("Error loading files: %s", e)
+        return {}
+
 def main():
     v = VectorCompare()
-    documents = {
-        0: '''At Scale You Will Hit Every Performance Issue I used to think I knew a bit about performance scalability and how to keep things trucking when you hit large amounts of data Truth is I know diddly squat on the subject since the most I have ever done is read about how its done To understand how I came about realising this you need some background''',
-        1: '''Richard Stallman to visit Australia Im not usually one to promote events and the like unless I feel there is a genuine benefit to be had by attending but this is one stands out Richard M Stallman the guru of Free Software is coming Down Under to hold a talk You can read about him here Open Source Celebrity to visit Australia''',
-        2: '''MySQL Backups Done Easily One thing that comes up a lot on sites like Stackoverflow and the like is how to backup MySQL databases The first answer is usually use mysqldump This is all fine and good till you start to want to dump multiple databases You can do this all in one like using the all databases option however this makes restoring a single database an issue since you have to parse out the parts you want which can be a pain''',
-        3: '''Why You Shouldn't roll your own CAPTCHA At a TechEd I attended a few years ago I was watching a presentation about Security presented by Rocky Heckman read his blog its quite good In it he was talking about security algorithms The part that really stuck with me went like this''',
-        4: '''The Great Benefit of Test Driven Development Nobody Talks About The feeling of productivity because you are writing lots of code Think about that for a moment Ask any developer who wants to develop why they became a developer One of the first things that comes up is I enjoy writing code This is one of the things that I personally enjoy doing Writing code any code especially when its solving my current problem makes me feel productive It makes me feel like Im getting somewhere Its empowering''',
-        5: '''Setting up GIT to use a Subversion SVN style workflow Moving from Subversion SVN to GIT can be a little confusing at first I think the biggest thing I noticed was that GIT doesnt have a specific workflow you have to pick your own Personally I wanted to stick to my Subversion like work-flow with a central server which all my machines would pull and push too Since it took a while to set up I thought I would throw up a blog post on how to do it''',
-        6: '''Why CAPTCHA Never Use Numbers 0 1 5 7 Interestingly this sort of question pops up a lot in my referring search term stats Why CAPTCHAs never use the numbers 0 1 5 7 Its a relativity simple question with a reasonably simple answer Its because each of the above numbers are easy to confuse with a letter See the below''',
-    }
-    index = {
-        0: v.concordance(documents[0].lower()),
-        1: v.concordance(documents[1].lower()),
-        2: v.concordance(documents[2].lower()),
-        3: v.concordance(documents[3].lower()),
-        4: v.concordance(documents[4].lower()),
-        5: v.concordance(documents[5].lower()),
-        6: v.concordance(documents[6].lower()),
-    }
+    index = load_files(DIR_PATH, v)
 
     search_term = input("Enter search term: ").lower()
     matches = []
 
     for i in range(len(index)):
-        score = v.relation(v.concordance(search_term), index[i])
+        score = v.relation(v.concordance(search_term), index[i]["concordance"])
+        logging.info("Score for file n %d: %.4f", i+1, score)
         if score != 0:
-            matches.append((score, documents[i][:100]))
+            matches.append((score, index[i]["filepath"]))
 
     matches.sort(reverse=True)
-    for i in matches:
-        print(i[0], i[1])
+    for score, filepath in matches:
+        print(f"Score: {score:.4f} - File: {filepath}")
+
+def test():
+    """Random test function"""
+    for filename in os.listdir("C:\\Users\\User\\Documents\\Martin"):
+        print(filename)
 
 if __name__ == "__main__":
     main()
