@@ -1,5 +1,6 @@
 from docx import Document
 import logging
+import math
 import os
 
 
@@ -9,7 +10,64 @@ SUPPORTED_FILE_TYPES = {".txt", ".docx"}
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(levelname)s] %(message)s")
 
+STOP_WORDS = { # exclude these from the concordance but keep an eye on them for future improvements
+    # English
+    "a", "an", "the", "and", "or", "but", "is", "are", "was", "were", "be", "been",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could", "should",
+    "may", "might", "must", "can", "of", "in", "on", "at", "to", "for", "with",
+    "by", "from", "about", "as", "into", "through", "during", "before", "after",
+    "i", "you", "he", "she", "it", "we", "they", "me", "him", "her", "us", "them",
+    "my", "your", "his", "its", "our", "their", "this", "that", "these", "those",
+    # Slovak
+    "a", "aj", "ale", "aby", "ak", "ako", "alebo", "by", "bol", "bola", "bolo",
+    "boli", "byť", "do", "je", "jeho", "jej", "ich", "im", "ja", "ku", "k", "ma",
+    "mi", "mna", "mne", "na", "nad", "ním", "niečo", "nič", "o", "od", "on", "ona",
+    "ono", "oni", "po", "pod", "pre", "pri", "s", "sa", "sem", "si", "sme", "som",
+    "so", "som", "sú", "ta", "tak", "tam", "ten", "tí", "to", "tú", "tu", "ty",
+    "v", "vo", "z", "za", "že"
+}
+
 class VectorCompare:
+    def __init__(self):
+        """Initialize the VectorCompare with an empty IDF dictionary"""
+        self.idf = {}
+
+    def compute_idf(self, index: dict[int, dict]) -> None:
+        """Compute the inverse document frequency (IDF) for each word in the index and store it in self.idf
+         - index: a dictionary where keys are document indexes and values are dictionaries
+         - IDF = log(Total number of documents / Number of documents containing the word)
+        """
+        doc_num = len(index)
+        words_in_doc_count = {}
+
+        for i_value in index.values():
+            unique_words = set(i_value["concordance"].keys())
+            for word in unique_words:
+                words_in_doc_count[word] = words_in_doc_count.get(word, 0) + 1
+
+        for word, count in words_in_doc_count.items():
+            self.idf[word] = math.log((doc_num + 1) / (count + 1))
+
+    def tf_idf_vector(self, s_concordance: dict[str, int], query_w: set = None, boost: float = 2.0) -> dict[str, float]:
+        """Compute the TF-IDF vector for a given concordance dictionary
+         - TF = (number the word occurs in the concordance) / (length of the concordance)
+         - IDF is retrieved from self.idf
+         - if query_w is provided and the word is in query_w, multiply TF-IDF by boost to increase weight
+         - return a dic representing the TF-IDF vector (TF-IDF = TF * IDF)
+        """
+        total_words = sum(s_concordance.values())
+        tf_idf_vector = {}
+
+        for word, count in s_concordance.items():
+            tf = count / total_words
+            idf = self.idf.get(word, 0)
+            tf_idf = tf * idf
+            if query_w and word in query_w:
+                tf_idf *= boost
+                # logging.info("Boosted TF-IDF for word '%s': %.4f", word, tf_idf)
+            tf_idf_vector[word] = tf_idf
+        return tf_idf_vector
+
     def magnitude(self, vector: dict) -> float:
         """Compute the magnitude of a vector represented as a dictionary"""
         if type(vector) != dict:
@@ -35,15 +93,20 @@ class VectorCompare:
     def concordance(self, document: str) -> dict[str, int]:
         """Generate a concordance dictionary from the input document string
          - return a dictionary with words as keys and their count as values
+         - exclude stop words defined in STOP_WORDS
         """
         if type(document) != str:
             raise ValueError("This function accepts only string inputs!")
         con = {}
         for word in document.split():
-            if con.get(word):
-                con[word] += 1
+            word = word.strip(".,!?;:\"'()[]{}<>").lower()
+            if word in STOP_WORDS or word == "":
+                continue
             else:
-                con[word] = 1
+                if con.get(word):
+                    con[word] += 1
+                else:
+                    con[word] = 1
         return con
 
 def load_files(folder, v: VectorCompare) -> dict[int, dict]:
@@ -59,7 +122,8 @@ def load_files(folder, v: VectorCompare) -> dict[int, dict]:
 
             if os.path.isdir(filepath): # Handle subdirectories by recursion and merging results
                 inside = load_files(filepath, v)
-                index.update(inside)
+                for value in inside.values():
+                    index[len(index)] = value
                 continue
 
             if not filename.endswith(tuple(SUPPORTED_FILE_TYPES)):
@@ -75,36 +139,38 @@ def load_files(folder, v: VectorCompare) -> dict[int, dict]:
                 content = "\n".join([par.text for par in doc.paragraphs])
 
             index[len(index)] = {
-                "concordance" : v.concordance(content.lower()),
+                "concordance" : v.concordance(content),
                 "filepath" : filepath
             }
-        logging.info("Loaded %d files from %s successfully", len(index), folder)
+        # logging.info("Loaded %d files from %s successfully", len(index), folder)
         return index
     except Exception as e:
         logging.error("Error loading files: %s", e)
         return {}
 
-def main():
+
+def main() -> None:
+    """Main function to execute the search"""
     v = VectorCompare()
     index = load_files(DIR_PATH, v)
+    v.compute_idf(index)
 
-    search_term = input("Enter search term: ").lower()
+    search_term = input("Enter search term: ")
+    search_concordance = v.concordance(search_term)
+    search_vector = v.tf_idf_vector(search_concordance)
+    query_words = set(search_concordance.keys())
     matches = []
 
     for i in range(len(index)):
-        score = v.relation(v.concordance(search_term), index[i]["concordance"])
-        logging.info("Score for file n %d: %.4f", i+1, score)
-        if score != 0:
+        file_vector = v.tf_idf_vector(index[i]["concordance"], query_w=query_words, boost=2.5)
+        score = v.relation(search_vector, file_vector)
+        if score > 0.005:
             matches.append((score, index[i]["filepath"]))
+            # logging.info("Score for file n %d: %.4f", i+1, score)
 
     matches.sort(reverse=True)
     for score, filepath in matches:
         print(f"Score: {score:.4f} - File: {filepath}")
-
-def test():
-    """Random test function"""
-    for filename in os.listdir("C:\\Users\\User\\Documents\\Martin"):
-        print(filename)
 
 if __name__ == "__main__":
     main()
