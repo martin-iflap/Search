@@ -1,4 +1,5 @@
 from docx import Document
+import unicodedata
 import logging
 import math
 import os
@@ -100,6 +101,7 @@ class VectorCompare:
         con = {}
         for word in document.split():
             word = word.strip(".,!?;:\"'()[]{}<>").lower()
+            word = self.remove_diacritics(word)
             if word in STOP_WORDS or word == "":
                 continue
             else:
@@ -108,6 +110,13 @@ class VectorCompare:
                 else:
                     con[word] = 1
         return con
+
+    def remove_diacritics(self, text: str) -> str:
+        """Remove diacritics from the input text string
+         - use this to be able to search without diacritics
+        """
+        normalized = unicodedata.normalize('NFD', text)
+        return ''.join(c for c in normalized if unicodedata.category(c) != 'Mn')
 
 def load_files(folder, v: VectorCompare) -> dict[int, dict]:
     """Load files from the specified folder and return a concordance index
@@ -155,22 +164,26 @@ def main() -> None:
     index = load_files(DIR_PATH, v)
     v.compute_idf(index)
 
-    search_term = input("Enter search term: ")
-    search_concordance = v.concordance(search_term)
-    search_vector = v.tf_idf_vector(search_concordance)
-    query_words = set(search_concordance.keys())
-    matches = []
+    while True:
+        search_term = input("Enter search term: ")
+        search_concordance = v.concordance(search_term)
+        search_vector = v.tf_idf_vector(search_concordance)
+        query_words = set(search_concordance.keys())
+        matches = []
 
-    for i in range(len(index)):
-        file_vector = v.tf_idf_vector(index[i]["concordance"], query_w=query_words, boost=2.5)
-        score = v.relation(search_vector, file_vector)
-        if score > 0.005:
-            matches.append((score, index[i]["filepath"]))
-            # logging.info("Score for file n %d: %.4f", i+1, score)
+        for i in range(len(index)):
+            file_vector = v.tf_idf_vector(index[i]["concordance"], query_w=query_words, boost=2.5)
+            score = v.relation(search_vector, file_vector)
+            if score > 0.005:
+                matches.append((score, index[i]["filepath"]))
+                # logging.info("Score for file n %d: %.4f", i+1, score)
 
-    matches.sort(reverse=True)
-    for score, filepath in matches:
-        print(f"Score: {score:.4f} - File: {filepath}")
+        matches.sort(reverse=True)
+        for score, filepath in matches:
+            print(f"Score: {score:.4f} - File: {filepath}")
+        cont = input("Type exit to exit. Press any key to continue... ")
+        if cont.lower() == "exit":
+            break
 
 if __name__ == "__main__":
     main()
