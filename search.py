@@ -1,5 +1,7 @@
 from docx import Document
 import unicodedata
+import argparse
+import threading
 import logging
 import math
 import os
@@ -11,7 +13,7 @@ SUPPORTED_FILE_TYPES = {".txt", ".docx"}
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(levelname)s] %(message)s")
 
-STOP_WORDS = { # exclude these from the concordance but keep an eye on them for future improvements
+STOP_WORDS = {
     # English
     "a", "an", "the", "and", "or", "but", "is", "are", "was", "were", "be", "been",
     "have", "has", "had", "do", "does", "did", "will", "would", "could", "should",
@@ -25,7 +27,7 @@ STOP_WORDS = { # exclude these from the concordance but keep an eye on them for 
     "mi", "mna", "mne", "na", "nad", "ním", "niečo", "nič", "o", "od", "on", "ona",
     "ono", "oni", "po", "pod", "pre", "pri", "s", "sa", "sem", "si", "sme", "som",
     "so", "som", "sú", "ta", "tak", "tam", "ten", "tí", "to", "tú", "tu", "ty",
-    "v", "vo", "z", "za", "že"
+    "v", "vo", "z", "za", "že"  # exclude these from the concordance but keep an eye on them for future improvements
 }
 
 class VectorCompare:
@@ -157,15 +159,42 @@ def load_files(folder, v: VectorCompare) -> dict[int, dict]:
         logging.error("Error loading files: %s", e)
         return {}
 
+def thread_load_files_index(folder, v: VectorCompare, index_container: dict) -> None:
+    """Thread target function to load files and compute IDF while waiting for user input
+     - update the result dict in main with the index and a finished flag
+     - why multithreading? to avoid waits and because I felt like it
+    """
+    index = load_files(folder, v)
+    v.compute_idf(index)
+    index_container['index'] = index
+    index_container["finished"] = True
 
 def main() -> None:
-    """Main function to execute the search"""
+    """Main function to execute the search
+     - optional argparse argument --dir to specify directory path else DIR_PATH is used
+     - loads files, computes IDF, and enters a loop to accept search terms and display results
+     - continue until user types 'exit'
+    """
+    parser = argparse.ArgumentParser(description="Search through text and docx files in a specified directory.")
+    parser.add_argument("--dir", type=str, help="Directory path to search files in.")
+    args = parser.parse_args()
+
+    search_dir = args.dir if args.dir and os.path.isdir(args.dir) else DIR_PATH
+    if args.dir and not os.path.exists(args.dir):
+        logging.warning("Invalid directory path provided. Using default path: %s", DIR_PATH)
+
+
     v = VectorCompare()
-    index = load_files(DIR_PATH, v)
-    v.compute_idf(index)
+    result = {"index": None, "finished": False}
+    threading.Thread(target=thread_load_files_index, args=(search_dir, v, result)).start()
 
     while True:
         search_term = input("Enter search term: ")
+
+        if not result["finished"]:
+            thread.join()
+        index = result["index"]
+
         search_concordance = v.concordance(search_term)
         search_vector = v.tf_idf_vector(search_concordance)
         query_words = set(search_concordance.keys())
