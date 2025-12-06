@@ -208,11 +208,24 @@ def main() -> None:
                 # logging.info("Score for file n %d: %.4f", i+1, score)
 
         matches.sort(reverse=True)
-        for score, filepath in matches:
-            print(f"Score: {score:.4f} - File: {filepath}")
-        cont = input("Type exit to exit. Press any key to continue... ")
+        for num, (score, filepath) in enumerate(matches, start=1):
+            print(f"{num}. Score: {score:.4f} - File: {filepath}")
+
+        cont = input("Type exit to exit or open <file_number> to open file. Press enter to continue... ")
         if cont.lower() == "exit":
             break
+        if cont.lower().startswith("open "):
+            try:
+                file_number = int(cont.split()[1]) - 1
+                if 0 <= file_number < len(matches):
+                    os.startfile(matches[file_number][1])
+                else:
+                    print("Invalid file number.")
+            except (IndexError, ValueError):
+                print("Usage: open <file_number>")
 
 if __name__ == "__main__":
     main()
+
+# plan for the future: optimize stop words for all languages, optimize performance for larger datasets, add snippets display in results?
+# improve somehow the cont input to be more nice, also add better logging and error handling, write some tests?
