@@ -20,7 +20,7 @@ STOP_WORDS = {
     "may", "might", "must", "can", "of", "in", "on", "at", "to", "for", "with",
     "by", "from", "about", "as", "into", "through", "during", "before", "after",
     "i", "you", "he", "she", "it", "we", "they", "me", "him", "her", "us", "them",
-    "my", "your", "his", "its", "our", "their", "this", "that", "these", "those",
+    "my", "your", "his", "its", "our", "their", "this", "that", "these", "those", "what",
     # Slovak
     "a", "aj", "ale", "aby", "ak", "ako", "alebo", "by", "bol", "bola", "bolo",
     "boli", "byť", "do", "je", "jeho", "jej", "ich", "im", "ja", "ku", "k", "ma",
@@ -40,6 +40,9 @@ class VectorCompare:
          - index: a dictionary where keys are document indexes and values are dictionaries
          - IDF = log(Total number of documents / Number of documents containing the word)
         """
+        if type(index) != dict:
+            raise ValueError("This function accepts only dictionary inputs!")
+
         doc_num = len(index)
         words_in_doc_count = {}
 
@@ -51,17 +54,20 @@ class VectorCompare:
         for word, count in words_in_doc_count.items():
             self.idf[word] = math.log((doc_num + 1) / (count + 1))
 
-    def tf_idf_vector(self, s_concordance: dict[str, int], query_w: set = None, boost: float = 2.0) -> dict[str, float]:
+    def tf_idf_vector(self, concordance: dict[str, int], query_w: set = None, boost: float = 2.0) -> dict[str, float]:
         """Compute the TF-IDF vector for a given concordance dictionary
          - TF = (number the word occurs in the concordance) / (length of the concordance)
          - IDF is retrieved from self.idf
          - if query_w is provided and the word is in query_w, multiply TF-IDF by boost to increase weight
          - return a dic representing the TF-IDF vector (TF-IDF = TF * IDF)
         """
-        total_words = sum(s_concordance.values())
+        if type(concordance) != dict:
+            raise ValueError("This function accepts only dictionary inputs!")
+
+        total_words = sum(concordance.values())
         tf_idf_vector = {}
 
-        for word, count in s_concordance.items():
+        for word, count in concordance.items():
             tf = count / total_words
             idf = self.idf.get(word, 0)
             tf_idf = tf * idf
@@ -106,17 +112,15 @@ class VectorCompare:
             word = self.remove_diacritics(word)
             if word in STOP_WORDS or word == "":
                 continue
-            else:
-                if con.get(word):
-                    con[word] += 1
-                else:
-                    con[word] = 1
+            con[word] = con.get(word, 0) + 1
         return con
 
     def remove_diacritics(self, text: str) -> str:
         """Remove diacritics from the input text string
          - use this to be able to search without diacritics
         """
+        if type(text) != str:
+            raise ValueError("This function accepts only string inputs!")
         normalized = unicodedata.normalize('NFD', text)
         return ''.join(c for c in normalized if unicodedata.category(c) != 'Mn')
 
@@ -164,6 +168,9 @@ def thread_load_files_index(folder, v: VectorCompare, index_container: dict) -> 
      - update the result dict in main with the index and a finished flag
      - why multithreading? to avoid waits and because I felt like it
     """
+    if type(index_container) != dict:
+        raise ValueError("This function accepts only dictionary inputs!")
+
     index = load_files(folder, v)
     v.compute_idf(index)
     index_container['index'] = index
@@ -185,47 +192,71 @@ def main() -> None:
 
 
     v = VectorCompare()
-    result = {"index": None, "finished": False}
-    threading.Thread(target=thread_load_files_index, args=(search_dir, v, result)).start()
+    result: dict = {"index": None, "finished": False}
+    index_thread = threading.Thread(target=thread_load_files_index, args=(search_dir, v, result))
+    index_thread.start()
 
     while True:
         search_term = input("Enter search term: ")
+        while search_term.strip() == "":
+            search_term = input("Enter non-empty search term: ")
 
         if not result["finished"]:
-            thread.join()
-        index = result["index"]
+            index_thread.join()
 
-        search_concordance = v.concordance(search_term)
-        search_vector = v.tf_idf_vector(search_concordance)
+        index = result["index"]
+        if index is None or len(index) == 0:
+            print("No files loaded to search.")
+            logging.warning("Index is empty, cannot perform search")
+            continue
+
+        search_concordance: dict[str, int] = v.concordance(search_term)
+        search_vector: dict[str, float] = v.tf_idf_vector(search_concordance)
         query_words = set(search_concordance.keys())
-        matches = []
+        matches: list = []
 
         for i in range(len(index)):
-            file_vector = v.tf_idf_vector(index[i]["concordance"], query_w=query_words, boost=2.5)
+            file_vector = v.tf_idf_vector(index[i]["concordance"], query_w=query_words)
             score = v.relation(search_vector, file_vector)
             if score > 0.005:
                 matches.append((score, index[i]["filepath"]))
                 # logging.info("Score for file n %d: %.4f", i+1, score)
 
         matches.sort(reverse=True)
+
+        if not matches:
+            print("No matches found.")
+
         for num, (score, filepath) in enumerate(matches, start=1):
             print(f"{num}. Score: {score:.4f} - File: {filepath}")
 
-        cont = input("Type exit to exit or open <file_number> to open file. Press enter to continue... ")
-        if cont.lower() == "exit":
+        exit_search: bool = False
+        cont: str = "continue"
+        while cont.strip() != "":
+            cont = input("Type exit to exit or open <file_number> to open file. Press enter to continue... ")
+            if cont.lower() == "exit":
+                exit_search = True
+                break
+            if cont.lower().startswith("open "):
+                try:
+                    file_number = int(cont.split()[1]) - 1
+                    if 0 <= file_number < len(matches):
+                        try:
+                            os.startfile(matches[file_number][1])
+                        except FileNotFoundError:
+                            logging.error("File not found: %s", matches[file_number][1])
+                        except Exception as e:
+                            logging.error("Error opening file: %s", e)
+                    else:
+                        print("Invalid file number.")
+                except (IndexError, ValueError):
+                    print("Usage: open <file_number>")
+        if exit_search:
             break
-        if cont.lower().startswith("open "):
-            try:
-                file_number = int(cont.split()[1]) - 1
-                if 0 <= file_number < len(matches):
-                    os.startfile(matches[file_number][1])
-                else:
-                    print("Invalid file number.")
-            except (IndexError, ValueError):
-                print("Usage: open <file_number>")
+
 
 if __name__ == "__main__":
     main()
 
-# plan for the future: optimize stop words for all languages, optimize performance for larger datasets, add snippets display in results?
-# improve somehow the cont input to be more nice, also add better logging and error handling, write some tests?
+# optimize stop words for all languages, optimize performance for larger datasets, add snippets display in results?
+# lemmatization and stemming, improve cont logic?, better logging and error handling, write some tests?, avoid stop words only if there are enough non-stop words?
