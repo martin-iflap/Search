@@ -3,6 +3,7 @@ import unicodedata
 import argparse
 import threading
 import logging
+import spacy
 import math
 import os
 
@@ -34,6 +35,11 @@ class VectorCompare:
     def __init__(self):
         """Initialize the VectorCompare with an empty IDF dictionary"""
         self.idf = {}
+        try:
+            self.nlp = spacy.load("en_core_web_sm")
+        except Exception as e:
+            logging.error("Error loading spaCy model: %s", e)
+            self.nlp = None
 
     def compute_idf(self, index: dict[int, dict]) -> None:
         """Compute the inverse document frequency (IDF) for each word in the index and store it in self.idf
@@ -99,7 +105,7 @@ class VectorCompare:
             relevance = top_value / (self.magnitude(vector1) * self.magnitude(vector2))
         return relevance
 
-    def concordance(self, document: str) -> dict[str, int]:
+    def concordance(self, document: str, use_lemmatization: bool = True) -> dict[str, int]:
         """Generate a concordance dictionary from the input document string
          - return a dictionary with words as keys and their count as values
          - exclude stop words defined in STOP_WORDS
@@ -107,7 +113,15 @@ class VectorCompare:
         if type(document) != str:
             raise ValueError("This function accepts only string inputs!")
         con = {}
-        for word in document.split():
+
+        is_non_eng: bool = any(char in document.lower() for char in set('ľščťžýáíéôúäöüß'))
+        if use_lemmatization and self.nlp and not is_non_eng:
+                doc = self.nlp(document)
+                words = [token.lemma_ for token in doc]
+        else:
+            words = document.split()
+
+        for word in words:
             word = word.strip(".,!?;:\"'()[]{}<>").lower()
             word = self.remove_diacritics(word)
             if word in STOP_WORDS or word == "":
@@ -258,5 +272,5 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 
-# optimize stop words for all languages, optimize performance for larger datasets, add snippets display in results?
-# lemmatization and stemming, improve cont logic?, better logging and error handling, write some tests?, avoid stop words only if there are enough non-stop words?
+# optimize stop words for all languages, optimize performance for larger datasets, ?add snippets display in results?
+# improve cont logic?, better logging and error handling, write some tests?
