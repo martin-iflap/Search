@@ -1,3 +1,4 @@
+from pypdf import PdfReader
 from docx import Document
 import unicodedata
 import argparse
@@ -8,13 +9,13 @@ import math
 import os
 
 
-DIR_PATH = "C:\\Users\\User\\Documents\\Martin"
-SUPPORTED_FILE_TYPES = {".txt", ".docx"}
+DIR_PATH: str = "C:\\Users\\User\\Documents\\Martin"
+SUPPORTED_FILE_TYPES: set[str] = {".txt", ".docx", ".pdf"}
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(levelname)s] %(message)s")
 
-STOP_WORDS = {
+STOP_WORDS: set[str] = {
     # English
     "a", "an", "the", "and", "or", "but", "is", "are", "was", "were", "be", "been",
     "have", "has", "had", "do", "does", "did", "will", "would", "could", "should",
@@ -32,14 +33,21 @@ STOP_WORDS = {
 }
 
 class VectorCompare:
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the VectorCompare with an empty IDF dictionary"""
         self.idf = {}
-        try:
-            self.nlp = spacy.load("en_core_web_sm")
-        except Exception as e:
-            logging.error("Error loading spaCy model: %s", e)
-            self.nlp = None
+        self._nlp = None
+
+    @property
+    def nlp(self):
+        """Lazy load the spaCy NLP model when first needed"""
+        if self._nlp is None:
+            try:
+                self._nlp = spacy.load("en_core_web_sm")
+            except Exception as e:
+                logging.error("Error loading spaCy model: %s", e)
+                self._nlp = False
+        return self._nlp if self._nlp is not False else None
 
     def compute_idf(self, index: dict[int, dict]) -> None:
         """Compute the inverse document frequency (IDF) for each word in the index and store it in self.idf
@@ -105,7 +113,7 @@ class VectorCompare:
             relevance = top_value / (self.magnitude(vector1) * self.magnitude(vector2))
         return relevance
 
-    def concordance(self, document: str, use_lemmatization: bool = True) -> dict[str, int]:
+    def concordance(self, document: str, use_lemmatization: bool = False) -> dict[str, int]:
         """Generate a concordance dictionary from the input document string
          - return a dictionary with words as keys and their count as values
          - exclude stop words defined in STOP_WORDS
@@ -138,7 +146,7 @@ class VectorCompare:
         normalized = unicodedata.normalize('NFD', text)
         return ''.join(c for c in normalized if unicodedata.category(c) != 'Mn')
 
-def load_files(folder, v: VectorCompare) -> dict[int, dict]:
+def load_files(folder: str, v: VectorCompare) -> dict[int, dict]:
     """Load files from the specified folder and return a concordance index
      - return a dictionary with indexes as keys and dicts as values where:
      -    1. concordance is a dict of word counts from the concordance method
@@ -161,11 +169,29 @@ def load_files(folder, v: VectorCompare) -> dict[int, dict]:
             content = ""
 
             if filename.endswith(".txt"):
-                with open(filepath, encoding="utf-8") as f:
-                    content = f.read()
+                try:
+                    with open(filepath, encoding="utf-8") as f:
+                        content = f.read()
+                except Exception as e:
+                    logging.error("Error reading TXT file %s: %s", filepath, e)
+                    continue
             elif filename.endswith(".docx"):
-                doc = Document(filepath)
-                content = "\n".join([par.text for par in doc.paragraphs])
+                try:
+                    doc = Document(filepath)
+                    content = "\n".join([par.text for par in doc.paragraphs])
+                except Exception as e:
+                    logging.error("Error reading DOCX file %s: %s", filepath, e)
+                    continue
+            elif filename.endswith(".pdf"):
+                try:
+                    reader = PdfReader(filepath)
+                    for page in reader.pages:
+                        text = page.extract_text()
+                        if text:
+                            content += text + "\n"
+                except Exception as e:
+                    logging.error("Error reading PDF file %s: %s", filepath, e)
+                    continue
 
             index[len(index)] = {
                 "concordance" : v.concordance(content),
@@ -177,7 +203,7 @@ def load_files(folder, v: VectorCompare) -> dict[int, dict]:
         logging.error("Error loading files: %s", e)
         return {}
 
-def thread_load_files_index(folder, v: VectorCompare, index_container: dict) -> None:
+def thread_load_files_index(folder: str, v: VectorCompare, index_container: dict) -> None:
     """Thread target function to load files and compute IDF while waiting for user input
      - update the result dict in main with the index and a finished flag
      - why multithreading? to avoid waits and because I felt like it
@@ -190,17 +216,74 @@ def thread_load_files_index(folder, v: VectorCompare, index_container: dict) -> 
     index_container['index'] = index
     index_container["finished"] = True
 
+
+def ask_and_display_search(v: VectorCompare, index: dict[int, str], search_term: str) -> bool:
+    """Ask user for a search term, perform the search, and display results
+     - return the post_search_options function to handle user options after displaying results to main
+     - return True to continue searching, False to exit
+    """
+    search_concordance: dict[str, int] = v.concordance(search_term)
+    search_vector: dict[str, float] = v.tf_idf_vector(search_concordance)
+    query_words: set[str] = set(search_concordance.keys())
+    matches: list[tuple[float, str]] = []
+
+    for i in range(len(index)):
+        file_vector = v.tf_idf_vector(index[i]["concordance"], query_w=query_words)
+        score = v.relation(search_vector, file_vector)
+        if score > 0.005:
+            matches.append((score, index[i]["filepath"]))
+            # logging.info("Score for file n %d: %.4f", i+1, score)
+
+    matches.sort(reverse=True)
+
+    if not matches:
+        print("No matches found.")
+
+    for num, (score, filepath) in enumerate(matches, start=1):
+        print(f"{num}. Score: {score:.4f} - File: {filepath}")
+
+    return post_search_options(matches)
+
+def post_search_options(matches: list[tuple[float, str]]) -> bool:
+    """Provide options to the user after displaying search results
+     - Allow user to open files, exit search loop or continue searching
+     - Return True to continue searching, False to exit
+    """
+    while True:
+        cont = input("Type exit to exit or open <file_number> to open file. Press enter to continue... ")
+        if cont.lower() == "exit":
+            return False
+
+        if cont.strip() == "":
+            return True
+
+        if cont.lower().startswith("open "):
+            try:
+                file_number = int(cont.split()[1]) - 1
+                if 0 <= file_number < len(matches):
+                    try:
+                        os.startfile(matches[file_number][1])
+                    except FileNotFoundError:
+                        logging.error("File not found: %s", matches[file_number][1])
+                    except Exception as e:
+                        logging.error("Error opening file: %s", e)
+                else:
+                    print("Invalid file number.")
+            except (IndexError, ValueError):
+                print("Usage: open <file_number>")
+
+
 def main() -> None:
     """Main function to execute the search
      - optional argparse argument --dir to specify directory path else DIR_PATH is used
-     - loads files, computes IDF, and enters a loop to accept search terms and display results
-     - continue until user types 'exit'
+     - loads files, computes IDF, and enters a loop to call ask_and_display_search
+     - continue until user decides to exit (ask_and_display_search returns False)
     """
     parser = argparse.ArgumentParser(description="Search through text and docx files in a specified directory.")
     parser.add_argument("--dir", type=str, help="Directory path to search files in.")
     args = parser.parse_args()
 
-    search_dir = args.dir if args.dir and os.path.isdir(args.dir) else DIR_PATH
+    search_dir: str = args.dir if args.dir and os.path.isdir(args.dir) else DIR_PATH
     if args.dir and not os.path.exists(args.dir):
         logging.warning("Invalid directory path provided. Using default path: %s", DIR_PATH)
 
@@ -222,55 +305,16 @@ def main() -> None:
         if index is None or len(index) == 0:
             print("No files loaded to search.")
             logging.warning("Index is empty, cannot perform search")
-            continue
+            break
 
-        search_concordance: dict[str, int] = v.concordance(search_term)
-        search_vector: dict[str, float] = v.tf_idf_vector(search_concordance)
-        query_words = set(search_concordance.keys())
-        matches: list = []
-
-        for i in range(len(index)):
-            file_vector = v.tf_idf_vector(index[i]["concordance"], query_w=query_words)
-            score = v.relation(search_vector, file_vector)
-            if score > 0.005:
-                matches.append((score, index[i]["filepath"]))
-                # logging.info("Score for file n %d: %.4f", i+1, score)
-
-        matches.sort(reverse=True)
-
-        if not matches:
-            print("No matches found.")
-
-        for num, (score, filepath) in enumerate(matches, start=1):
-            print(f"{num}. Score: {score:.4f} - File: {filepath}")
-
-        exit_search: bool = False
-        cont: str = "continue"
-        while cont.strip() != "":
-            cont = input("Type exit to exit or open <file_number> to open file. Press enter to continue... ")
-            if cont.lower() == "exit":
-                exit_search = True
-                break
-            if cont.lower().startswith("open "):
-                try:
-                    file_number = int(cont.split()[1]) - 1
-                    if 0 <= file_number < len(matches):
-                        try:
-                            os.startfile(matches[file_number][1])
-                        except FileNotFoundError:
-                            logging.error("File not found: %s", matches[file_number][1])
-                        except Exception as e:
-                            logging.error("Error opening file: %s", e)
-                    else:
-                        print("Invalid file number.")
-                except (IndexError, ValueError):
-                    print("Usage: open <file_number>")
-        if exit_search:
+        if not ask_and_display_search(v, index, search_term):
             break
 
 
 if __name__ == "__main__":
     main()
 
-# optimize stop words for all languages, optimize performance for larger datasets, ?add snippets display in results?
-# improve cont logic?, better logging and error handling, write some tests?
+# optimize stop words for all languages, optimize performance for larger datasets
+# improve cont logic?, better logging and error handling, write some tests
+# fuzzy matching, snippets display, json config file?, exclude patterns ["temp/", "*.bak", "draft_*"]
+# make vector compare a separate file, lazy load spacy model
