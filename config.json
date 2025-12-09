@@ -1,0 +1,29 @@
+{
+  "search": {
+    "dir_path": "C:\\Users\\User\\Documents\\Martin",
+    "supported_file_types": [".txt", ".docx", ".pdf"],
+    "search_threshold": 0.005
+  },
+  "vector_search": {
+    "boost_factor": 2.0,
+    "use_lemmatization": false
+  },
+  "stopwords": {
+    "slovak": [
+      "a", "aj", "ale", "aby", "ak", "ako", "alebo", "by", "bol", "bola", "bolo",
+    "boli", "byť", "do", "je", "jeho", "jej", "ich", "im", "ja", "ku", "k", "ma",
+    "mi", "mna", "mne", "na", "nad", "ním", "niečo", "nič", "o", "od", "on", "ona",
+    "ono", "oni", "po", "pod", "pre", "pri", "s", "sa", "sem", "si", "sme", "som",
+    "so", "som", "sú", "ta", "tak", "tam", "ten", "tí", "to", "tú", "tu", "ty",
+    "v", "vo", "z", "za", "že"
+    ],
+    "english": [
+      "a", "an", "the", "and", "or", "but", "is", "are", "was", "were", "be", "been",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could", "should",
+    "may", "might", "must", "can", "of", "in", "on", "at", "to", "for", "with",
+    "by", "from", "about", "as", "into", "through", "during", "before", "after",
+    "i", "you", "he", "she", "it", "we", "they", "me", "him", "her", "us", "them",
+    "my", "your", "his", "its", "our", "their", "this", "that", "these", "those", "what"
+    ]
+  }
+}
