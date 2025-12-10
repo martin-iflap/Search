@@ -1,19 +1,21 @@
-from vector_search import VectorCompare
 from config_loader import get_search_config
+from vector_search import VectorCompare
 from pypdf import PdfReader
 from docx import Document
-import argparse
 import threading
+import argparse
 import logging
+import fnmatch
 import os
 
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(levelname)s] %(message)s")
 
 search_config = get_search_config()
-DIR_PATH: str = search_config["dir_path"]
-SUPPORTED_FILE_TYPES: set[str] = set(search_config["supported_file_types"])
-SEARCH_THRESHOLD: float = search_config["search_threshold"]
+DIR_PATH: str = search_config.get("dir_path", "C:\\Users\\User\\Documents")
+SUPPORTED_FILE_TYPES: set[str] = set(search_config.get("supported_file_types", []))
+SEARCH_THRESHOLD: float = search_config.get("search_threshold", 0.1)
+EXCLUDE_PATTERNS = search_config.get("exclude_patterns", [])
 
 def load_files(folder: str, v: VectorCompare) -> dict[int, dict]:
     """Load files from the specified folder and return a concordance index
@@ -22,6 +24,12 @@ def load_files(folder: str, v: VectorCompare) -> dict[int, dict]:
      -    2. filepath is the path to the file
     """
     index = {}
+
+    for filename in os.listdir(folder):
+        filepath = os.path.join(folder, filename)
+        if any(fnmatch.fnmatch(filepath, pattern) for pattern in EXCLUDE_PATTERNS):
+            continue
+
     try:
         for filename in os.listdir(folder):
             filepath = os.path.join(folder, filename)
@@ -113,9 +121,9 @@ def ask_and_display_search(v: VectorCompare, index: dict[int, str], search_term:
     for num, (score, filepath) in enumerate(matches, start=1):
         print(f"{num}. Score: {score:.4f} - File: {filepath}")
 
-    return post_search_options(v, matches, search_term)
+    return post_search_options(v, matches, query_words)
 
-def post_search_options(v: VectorCompare, matches: list[tuple[float, str]], search_term: str) -> bool:
+def post_search_options(v: VectorCompare, matches: list[tuple[float, str]], query_words: set[str]) -> bool:
     """Provide options to the user after displaying search results
      - Allow user to open files, exit search loop or continue searching
      - Return True to continue searching, False to exit
@@ -147,7 +155,7 @@ def post_search_options(v: VectorCompare, matches: list[tuple[float, str]], sear
             try:
                 file_number = int(cont.split()[1]) - 1
                 if 0 <= file_number < len(matches):
-                    found = v.search_file(matches[file_number][1], search_term)
+                    found = v.search_file(matches[file_number][1], query_words)
                     if found:
                         print("Top results from file:")
                         for res in found:
@@ -201,7 +209,7 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 
-# optimize stop words for all languages, optimize performance for larger datasets
-# better logging and error handling, write some tests, check error cases(logging vs raise)
-# fuzzy matching, exclude patterns ["temp/", "*.bak", "draft_*"]
-# check the config imports
+# optimize stop words for all languages, optimize performance
+# write some tests, check error cases(logging vs raise)
+# fuzzy matching??, multiprocessing for loading files,
+# cache file content?

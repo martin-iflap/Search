@@ -1,4 +1,5 @@
 from config_loader import get_all_stopwords, get_vector_search_config, load_config
+from functools import lru_cache
 from pypdf import PdfReader
 from docx import Document
 import unicodedata
@@ -7,6 +8,17 @@ import spacy
 import math
 import re
 
+SENTENCE_SPLIT_PATTERN = re.compile(r'[.!?]+')
+
+@lru_cache(maxsize=1000)
+def remove_diacritics(text: str) -> str:
+    """Remove diacritics from the input text string
+     - use this to be able to search without diacritics
+    """
+    if type(text) != str:
+        raise ValueError("This function accepts only string inputs!")
+    normalized = unicodedata.normalize('NFD', text)
+    return ''.join(c for c in normalized if unicodedata.category(c) != 'Mn')
 
 class VectorCompare:
     def __init__(self, config: dict = None) -> None:
@@ -85,25 +97,22 @@ class VectorCompare:
         """Compute the magnitude of a vector represented as a dictionary"""
         if type(vector) != dict:
             raise ValueError("This function accepts only dictionary inputs!")
-        total = 0
-        for count in vector.values():
-            total += count ** 2
-        return total ** 0.5
+        return math.sqrt(sum(val ** 2 for val in vector.values()))
 
     def relation(self, vector1: dict, vector2: dict) -> float:
         """Compute the cosine similarity between two vectors represented as dictionaries"""
         if not isinstance(vector1, dict) or not isinstance(vector2, dict):
             raise ValueError("This function accepts only dictionary inputs!")
-        relevance = 0
-        top_value = 0
-        for word in vector1.keys():
-            if vector2.get(word):
-                top_value += vector1[word] * vector2[word]
+
+        common_words = set(vector1.keys()) & set(vector2.keys())
+        if not common_words:
+            return 0.0
+
+        top_value = sum(vector1[word] * vector2[word] for word in common_words)
         magnitude_v1 = self.magnitude(vector1)
         magnitude_v2 = self.magnitude(vector2)
-        if magnitude_v1 * magnitude_v2 != 0:
-            relevance = top_value / (magnitude_v1 * magnitude_v2)
-        return relevance
+
+        return top_value / (magnitude_v1 * magnitude_v2) if magnitude_v1 * magnitude_v2 != 0 else 0.0
 
     def concordance(self, document: str, use_lemmatization: bool = None) -> dict[str, int]:
         """Generate a concordance dictionary from the input document string
@@ -126,19 +135,18 @@ class VectorCompare:
 
         for word in words:
             word = word.strip(".,!?;:\"'()[]{}<>").lower()
-            word = self.remove_diacritics(word)
-            if word in self._stop_words or word == "":
-                continue
-            con[word] = con.get(word, 0) + 1
+            word = remove_diacritics(word)
+            if word and word not in self._stop_words:
+                con[word] = con.get(word, 0) + 1
         return con
 
-    def search_file(self, filepath: str, search_term: str,
+    def search_file(self, filepath: str, query_words: str,
                     max_results: int = None, use_file_lemmatization: bool = None) -> list[str]:
-        """Search for the search_term in the file specified by filepath
-         - return a list of the top max_results sentences containing the search_term, ranked by relevance
+        """Search for the query_words in the file specified by filepath
+         - return a list of the top max_results sentences containing the query_words, ranked by relevance
          - support .txt, .docx, and .pdf files
          - return an empty list if an error occurs
-         - relevance is determined by the number of overlapping words between the search_term and each sentence
+         - relevance is determined by the number of overlapping words between the query_words and each sentence
         """
         if max_results is None:
             max_results = self._max_search_results
@@ -157,9 +165,8 @@ class VectorCompare:
                 reader = PdfReader(filepath)
                 content = "".join(page.extract_text() or "" for page in reader.pages)
 
-            sentences: list[str] = [s.strip() for s in re.split(r'[.!?]+', content)
+            sentences: list[str] = [s.strip() for s in SENTENCE_SPLIT_PATTERN.split(content)
                                     if s.strip()]
-            query_words = set(word for word in search_term.split() if word not in self._stop_words)
             if not query_words:
                 logging.warning("No valid search words found in search term: %s", search_term)
                 return []
@@ -170,13 +177,13 @@ class VectorCompare:
                 if use_file_lemmatization and self.nlp:
                     doc = self.nlp(sentence_lower)
                     sentence_words = set(
-                                self.remove_diacritics(token.lemma_)
+                                remove_diacritics(token.lemma_)
                                 for token in doc
                                 if token.lemma_ not in self._stop_words
                     )
                 else:
                     sentence_words = set(
-                                self.remove_diacritics(w)
+                                remove_diacritics(w)
                                 for w in sentence_lower.split()
                                 if w not in self._stop_words
                     )
@@ -190,12 +197,3 @@ class VectorCompare:
         except Exception as e:
             logging.error("Error searching file %s: %s", filepath, e)
             return []
-
-    def remove_diacritics(self, text: str) -> str:
-        """Remove diacritics from the input text string
-         - use this to be able to search without diacritics
-        """
-        if type(text) != str:
-            raise ValueError("This function accepts only string inputs!")
-        normalized = unicodedata.normalize('NFD', text)
-        return ''.join(c for c in normalized if unicodedata.category(c) != 'Mn')

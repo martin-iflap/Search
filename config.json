@@ -2,7 +2,11 @@
   "search": {
     "dir_path": "C:\\Users\\User\\Documents\\Martin",
     "supported_file_types": [".txt", ".docx", ".pdf"],
-    "search_threshold": 0.005
+    "search_threshold": 0.005,
+    "exclude_patterns": [
+      "*.exe", "*.dll", "*.sys", "temp/",
+      "*.bak", "draft_*", "__pycache__"
+    ]
   },
   "vector_search": {
     "boost_factor": 2.0,
