@@ -1,8 +1,11 @@
 from config_loader import get_all_stopwords, get_vector_search_config, load_config
+from pypdf import PdfReader
+from docx import Document
 import unicodedata
 import logging
 import spacy
 import math
+import re
 
 
 class VectorCompare:
@@ -15,9 +18,12 @@ class VectorCompare:
         search_config = get_vector_search_config(config)
         self._boost_factor = search_config["boost_factor"]
         self._use_lemmatization = search_config["use_lemmatization"]
+        self._use_file_lemmatization = search_config["use_file_lemmatization"]
+        self._max_search_results = search_config["max_search_results"]
 
         self.idf = {}
         self._nlp = None
+        self.file_vector_cache: dict[int, dict[str, float]] = {}
 
     @property
     def nlp(self):
@@ -93,8 +99,10 @@ class VectorCompare:
         for word in vector1.keys():
             if vector2.get(word):
                 top_value += vector1[word] * vector2[word]
-        if self.magnitude(vector1) * self.magnitude(vector2) != 0:
-            relevance = top_value / (self.magnitude(vector1) * self.magnitude(vector2))
+        magnitude_v1 = self.magnitude(vector1)
+        magnitude_v2 = self.magnitude(vector2)
+        if magnitude_v1 * magnitude_v2 != 0:
+            relevance = top_value / (magnitude_v1 * magnitude_v2)
         return relevance
 
     def concordance(self, document: str, use_lemmatization: bool = None) -> dict[str, int]:
@@ -123,6 +131,65 @@ class VectorCompare:
                 continue
             con[word] = con.get(word, 0) + 1
         return con
+
+    def search_file(self, filepath: str, search_term: str,
+                    max_results: int = None, use_file_lemmatization: bool = None) -> list[str]:
+        """Search for the search_term in the file specified by filepath
+         - return a list of the top max_results sentences containing the search_term, ranked by relevance
+         - support .txt, .docx, and .pdf files
+         - return an empty list if an error occurs
+         - relevance is determined by the number of overlapping words between the search_term and each sentence
+        """
+        if max_results is None:
+            max_results = self._max_search_results
+        if use_file_lemmatization is None:
+            use_file_lemmatization = self._use_file_lemmatization
+
+        try:
+            content: str = ""
+            if filepath.endswith(".txt"):
+                with open(filepath, encoding="utf-8") as f:
+                    content = f.read()
+            elif filepath.endswith(".docx"):
+                doc = Document(filepath)
+                content = "\n".join([par.text for par in doc.paragraphs])
+            elif filepath.endswith(".pdf"):
+                reader = PdfReader(filepath)
+                content = "".join(page.extract_text() or "" for page in reader.pages)
+
+            sentences: list[str] = [s.strip() for s in re.split(r'[.!?]+', content)
+                                    if s.strip()]
+            query_words = set(word for word in search_term.split() if word not in self._stop_words)
+            if not query_words:
+                logging.warning("No valid search words found in search term: %s", search_term)
+                return []
+            scored = []
+
+            for sentence in sentences:
+                sentence_lower = sentence.lower()
+                if use_file_lemmatization and self.nlp:
+                    doc = self.nlp(sentence_lower)
+                    sentence_words = set(
+                                self.remove_diacritics(token.lemma_)
+                                for token in doc
+                                if token.lemma_ not in self._stop_words
+                    )
+                else:
+                    sentence_words = set(
+                                self.remove_diacritics(w)
+                                for w in sentence_lower.split()
+                                if w not in self._stop_words
+                    )
+                overlap = len(query_words & sentence_words)
+                if overlap > 0:
+                    scored.append((overlap / len(query_words), sentence))
+
+            scored.sort(reverse=True)
+            return [sentence for _, sentence in scored[:max_results]]
+
+        except Exception as e:
+            logging.error("Error searching file %s: %s", filepath, e)
+            return []
 
     def remove_diacritics(self, text: str) -> str:
         """Remove diacritics from the input text string

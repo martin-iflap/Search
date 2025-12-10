@@ -97,7 +97,9 @@ def ask_and_display_search(v: VectorCompare, index: dict[int, str], search_term:
     matches: list[tuple[float, str]] = []
 
     for i in range(len(index)):
-        file_vector = v.tf_idf_vector(index[i]["concordance"], query_w=query_words)
+        if i not in v.file_vector_cache:
+            v.file_vector_cache[i] = v.tf_idf_vector(index[i]["concordance"], query_w=query_words)
+        file_vector = v.file_vector_cache[i]
         score = v.relation(search_vector, file_vector)
         if score > SEARCH_THRESHOLD:
             matches.append((score, index[i]["filepath"]))
@@ -111,15 +113,15 @@ def ask_and_display_search(v: VectorCompare, index: dict[int, str], search_term:
     for num, (score, filepath) in enumerate(matches, start=1):
         print(f"{num}. Score: {score:.4f} - File: {filepath}")
 
-    return post_search_options(matches)
+    return post_search_options(v, matches, search_term)
 
-def post_search_options(matches: list[tuple[float, str]]) -> bool:
+def post_search_options(v: VectorCompare, matches: list[tuple[float, str]], search_term: str) -> bool:
     """Provide options to the user after displaying search results
      - Allow user to open files, exit search loop or continue searching
      - Return True to continue searching, False to exit
     """
     while True:
-        cont = input("Type exit to exit or open <file_number> to open file. Press enter to continue... ")
+        cont = input("Options: 'exit' | 'open <num>' | 'search <num>' | press enter to continue... ")
         if cont.lower() == "exit":
             return False
 
@@ -140,6 +142,22 @@ def post_search_options(matches: list[tuple[float, str]]) -> bool:
                     print("Invalid file number.")
             except (IndexError, ValueError):
                 print("Usage: open <file_number>")
+
+        elif cont.lower().startswith("search "):
+            try:
+                file_number = int(cont.split()[1]) - 1
+                if 0 <= file_number < len(matches):
+                    found = v.search_file(matches[file_number][1], search_term)
+                    if found:
+                        print("Top results from file:")
+                        for res in found:
+                            print(f"- {res}")
+                    else:
+                        print("No valid results found in the file.")
+                else:
+                    print("Invalid file number.")
+            except (IndexError, ValueError):
+                print("Usage: search <file_number>")
 
 
 def main() -> None:
@@ -163,7 +181,7 @@ def main() -> None:
     index_thread.start()
 
     while True:
-        search_term = input("Enter search term: ")
+        search_term = input("Enter search term: ").lower()
         while search_term.strip() == "":
             search_term = input("Enter non-empty search term: ")
 
@@ -185,5 +203,5 @@ if __name__ == "__main__":
 
 # optimize stop words for all languages, optimize performance for larger datasets
 # better logging and error handling, write some tests, check error cases(logging vs raise)
-# fuzzy matching, snippets display, exclude patterns ["temp/", "*.bak", "draft_*"]
-# cache search vector magnitude, check the config imports
+# fuzzy matching, exclude patterns ["temp/", "*.bak", "draft_*"]
+# check the config imports

@@ -6,7 +6,9 @@
   },
   "vector_search": {
     "boost_factor": 2.0,
-    "use_lemmatization": false
+    "use_lemmatization": false,
+    "use_file_lemmatization": true,
+    "max_search_results": 3
   },
   "stopwords": {
     "slovak": [
