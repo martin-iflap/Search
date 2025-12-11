@@ -158,8 +158,8 @@ def post_search_options(v: VectorCompare, matches: list[tuple[float, str]], quer
                     found = v.search_file(matches[file_number][1], query_words)
                     if found:
                         print("Top results from file:")
-                        for res in found:
-                            print(f"- {res}")
+                        for s in found:
+                            print(s)
                     else:
                         print("No valid results found in the file.")
                 else:
@@ -212,4 +212,4 @@ if __name__ == "__main__":
 # optimize stop words for all languages, optimize performance
 # write some tests, check error cases(logging vs raise)
 # fuzzy matching??, multiprocessing for loading files,
-# cache file content?
+# cache file content?, check the stupid folder structure handling

@@ -4,9 +4,9 @@ from pypdf import PdfReader
 from docx import Document
 import unicodedata
 import logging
-import spacy
 import math
 import re
+# spaCy imported below only if lemmatization is enabled
 
 SENTENCE_SPLIT_PATTERN = re.compile(r'[.!?]+')
 
@@ -22,7 +22,9 @@ def remove_diacritics(text: str) -> str:
 
 class VectorCompare:
     def __init__(self, config: dict = None) -> None:
-        """Initialize the VectorCompare with an empty IDF dictionary"""
+        """Initialize the VectorCompare with an empty IDF dictionary
+         - also import spaCy if lemmatization is enabled in config to save time
+        """
         if config is None:
             config = load_config()
 
@@ -32,6 +34,11 @@ class VectorCompare:
         self._use_lemmatization = search_config["use_lemmatization"]
         self._use_file_lemmatization = search_config["use_file_lemmatization"]
         self._max_search_results = search_config["max_search_results"]
+        self._spacy = None
+
+        if self._use_file_lemmatization or self._use_lemmatization:
+            import spacy
+            self._spacy = spacy # import here to save time if not needed
 
         self.idf = {}
         self._nlp = None
@@ -41,10 +48,14 @@ class VectorCompare:
     def nlp(self):
         """Lazy load the spaCy NLP model when first needed"""
         if self._nlp is None:
-            try:
-                self._nlp = spacy.load("en_core_web_sm")
-            except Exception as e:
-                logging.error("Error loading spaCy model: %s", e)
+            if self._spacy:
+                try:
+                    self._nlp = self._spacy.load("en_core_web_sm")
+                except Exception as e:
+                    logging.error("Error loading spaCy model: %s", e)
+                    self._nlp = False
+            else:
+                logging.error("spaCy not available, lemmatization disabled.")
                 self._nlp = False
         return self._nlp if self._nlp is not False else None
 
