@@ -1,0 +1,17 @@
+[project]
+name = "search"
+version = "0.1.0"
+description = "Use cosine similarity to search for documents in a directory."
+readme = "README.md"
+requires-python = ">=3.14" # 3.14
+dependencies = [
+    "click>=8,<9", # only needed for spaCy CLI
+    "en-core-web-sm",
+    "pymupdf==1.28.2",
+    "pytest==9.0.3",
+    "python-docx==1.2.0",
+    "spacy==3.8.11",
+]
+
+[tool.uv.sources]
+en-core-web-sm = { url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl" }
