@@ -1,6 +1,6 @@
-from config_loader import get_all_stopwords, get_vector_search_config, load_config
+from .config_loader import get_all_stopwords, get_vector_search_config, load_config
 from functools import lru_cache
-from pypdf import PdfReader
+import pymupdf
 from docx import Document
 import unicodedata
 import logging
@@ -27,6 +27,8 @@ class VectorCompare:
         """
         if config is None:
             config = load_config()
+        if config is not None and not isinstance(config, dict):
+            raise ValueError("Config must be a dictionary")
 
         self._stop_words = get_all_stopwords(config)
         search_config = get_vector_search_config(config)
@@ -51,7 +53,7 @@ class VectorCompare:
             if self._spacy:
                 try:
                     self._nlp = self._spacy.load("en_core_web_sm")
-                except Exception as e:
+                except OSError as e:
                     logging.error("Error loading spaCy model: %s", e)
                     self._nlp = False
             else:
@@ -131,13 +133,13 @@ class VectorCompare:
          - exclude stop words defined in STOP_WORDS
         """
         if not isinstance(document, str):
-            raise ValueError("This function accepts only string inputs!")
+            raise TypeError(f"Expected str, got {type(document).__name__}")
 
         if use_lemmatization is None:
             use_lemmatization = self._use_lemmatization
         con = {}
 
-        is_non_eng: bool = any(char in document.lower() for char in set('ľščťžýáíéôúäöüß'))
+        is_non_eng: bool = any(char in document for char in set('ľščťžýáíéôúäöüß'))
         if use_lemmatization and self.nlp and not is_non_eng:
                 doc = self.nlp(document)
                 words = [token.lemma_ for token in doc]
@@ -173,13 +175,16 @@ class VectorCompare:
                 doc = Document(filepath)
                 content = "\n".join([par.text for par in doc.paragraphs])
             elif filepath.endswith(".pdf"):
-                reader = PdfReader(filepath)
-                content = "".join(page.extract_text() or "" for page in reader.pages)
+                with pymupdf.open(filepath) as doc:
+                    for page in doc:
+                        text = page.get_text()
+                        if text:
+                            content += text + "\n"
 
             sentences: list[str] = [s.strip() for s in SENTENCE_SPLIT_PATTERN.split(content)
                                     if s.strip()]
             if not query_words:
-                logging.warning("No valid search words found in search term: %s", search_term)
+                logging.warning("No valid search words provided")
                 return []
             scored = []
 
@@ -205,6 +210,14 @@ class VectorCompare:
             scored.sort(reverse=True)
             return [sentence for _, sentence in scored[:max_results]]
 
+        except FileNotFoundError:
+            logging.error("File not found: %s", filepath)
+            return []
+        except PermissionError:
+            logging.error("Permission denied when accessing file: %s", filepath)
+            return []
         except Exception as e:
             logging.error("Error searching file %s: %s", filepath, e)
             return []
+
+# perhaps do something about searches in files that do not have sentences

@@ -1,6 +1,6 @@
-from config_loader import get_search_config
-from vector_search import VectorCompare
-from pypdf import PdfReader
+from .config_loader import get_search_config
+from .vector_search import VectorCompare
+import pymupdf
 from docx import Document
 import threading
 import argparse
@@ -25,14 +25,12 @@ def load_files(folder: str, v: VectorCompare) -> dict[int, dict]:
     """
     index = {}
 
-    for filename in os.listdir(folder):
-        filepath = os.path.join(folder, filename)
-        if any(fnmatch.fnmatch(filepath, pattern) for pattern in EXCLUDE_PATTERNS):
-            continue
-
     try:
         for filename in os.listdir(folder):
             filepath = os.path.join(folder, filename)
+
+            if any(fnmatch.fnmatch(filepath, pattern) for pattern in EXCLUDE_PATTERNS):
+                continue
 
             if os.path.isdir(filepath): # Handle subdirectories by recursion and merging results
                 inside = load_files(filepath, v)
@@ -61,22 +59,22 @@ def load_files(folder: str, v: VectorCompare) -> dict[int, dict]:
                     continue
             elif filename.endswith(".pdf"):
                 try:
-                    reader = PdfReader(filepath)
-                    for page in reader.pages:
-                        text = page.extract_text()
-                        if text:
-                            content += text + "\n"
+                    with pymupdf.open(filepath) as doc:
+                        for page in doc:
+                            text = page.get_text()
+                            if text:
+                                content += text + "\n"
                 except Exception as e:
                     logging.error("Error reading PDF file %s: %s", filepath, e)
                     continue
 
             index[len(index)] = {
-                "concordance" : v.concordance(content),
+                "concordance" : v.concordance(content.lower()),
                 "filepath" : filepath
             }
         # logging.info("Loaded %d files from %s successfully", len(index), folder)
         return index
-    except Exception as e:
+    except PermissionError as e:
         logging.error("Error loading files: %s", e)
         return {}
 

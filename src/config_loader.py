@@ -1,9 +1,11 @@
-import json
+from pathlib import Path
 import logging
+import json
 
 _config_cache = None
+CONFIG_PATH = Path(__file__).parent.parent / "config.json"
 
-def load_config(config_path: str = "config.json") -> dict:
+def load_config(config_path: str = CONFIG_PATH) -> dict:
     """Load configuration from a JSON file"""
     global _config_cache
     if _config_cache is not None:

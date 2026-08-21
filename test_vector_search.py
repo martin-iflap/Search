@@ -1,4 +1,4 @@
-from vector_search import VectorCompare, remove_diacritics
+from src.vector_search import VectorCompare, remove_diacritics
 import tempfile
 import pytest
 import math
@@ -82,10 +82,9 @@ def test_magnitude(vc: VectorCompare) -> None:
 
 def test_concordance(vc: VectorCompare) -> None:
     """Test the concordance generation of VectorCompare"""
-
     test_document: str = "This is a test. This test is only a test."
     expected_concordance: dict[str, int] = {'test': 3, 'only': 1}
-    assert vc.concordance(test_document) == expected_concordance
+    assert vc.concordance(test_document.lower()) == expected_concordance
 
 def test_compute_idf(vc: VectorCompare) -> None:
     """Test the IDF computation of VectorCompare"""
